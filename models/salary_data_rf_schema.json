@@ -1,0 +1,9 @@
+{
+  "features": [
+    {
+      "name": "YearsExperience",
+      "type": "numeric"
+    }
+  ],
+  "target": "Salary"
+}

@@ -1,0 +1,33 @@
+{
+  "features": [
+    {
+      "name": "Pclass",
+      "type": "integer"
+    },
+    {
+      "name": "Sex",
+      "type": "integer"
+    },
+    {
+      "name": "Age",
+      "type": "numeric"
+    },
+    {
+      "name": "SibSp",
+      "type": "integer"
+    },
+    {
+      "name": "Parch",
+      "type": "integer"
+    },
+    {
+      "name": "Fare",
+      "type": "numeric"
+    },
+    {
+      "name": "Embarked",
+      "type": "integer"
+    }
+  ],
+  "target": "Survived"
+}

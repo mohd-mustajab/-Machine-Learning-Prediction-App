@@ -1,0 +1,29 @@
+{
+  "features": [
+    {
+      "name": "age",
+      "type": "integer"
+    },
+    {
+      "name": "sex",
+      "type": "integer"
+    },
+    {
+      "name": "bmi",
+      "type": "numeric"
+    },
+    {
+      "name": "children",
+      "type": "integer"
+    },
+    {
+      "name": "smoker",
+      "type": "integer"
+    },
+    {
+      "name": "region",
+      "type": "integer"
+    }
+  ],
+  "target": "expenses"
+}

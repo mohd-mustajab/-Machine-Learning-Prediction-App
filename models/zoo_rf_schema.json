@@ -1,0 +1,69 @@
+{
+  "features": [
+    {
+      "name": "hair",
+      "type": "integer"
+    },
+    {
+      "name": "feathers",
+      "type": "integer"
+    },
+    {
+      "name": "eggs",
+      "type": "integer"
+    },
+    {
+      "name": "milk",
+      "type": "integer"
+    },
+    {
+      "name": "airborne",
+      "type": "integer"
+    },
+    {
+      "name": "aquatic",
+      "type": "integer"
+    },
+    {
+      "name": "predator",
+      "type": "integer"
+    },
+    {
+      "name": "toothed",
+      "type": "integer"
+    },
+    {
+      "name": "backbone",
+      "type": "integer"
+    },
+    {
+      "name": "breathes",
+      "type": "integer"
+    },
+    {
+      "name": "venomous",
+      "type": "integer"
+    },
+    {
+      "name": "fins",
+      "type": "integer"
+    },
+    {
+      "name": "legs",
+      "type": "integer"
+    },
+    {
+      "name": "tail",
+      "type": "integer"
+    },
+    {
+      "name": "domestic",
+      "type": "integer"
+    },
+    {
+      "name": "catsize",
+      "type": "integer"
+    }
+  ],
+  "target": "animal_name"
+}
