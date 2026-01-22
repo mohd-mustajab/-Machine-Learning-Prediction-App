@@ -1,6 +1,7 @@
 # app.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
 import json
 import plotly.express as px
@@ -20,7 +21,7 @@ ALGS_CLASS = ["logistic", "decision_tree", "rf"]
 ALGS_REG = ["linear", "ridge", "lasso", "rf"]
 
 # -------------------------------
-# Decoding maps for encoded data
+# Decode maps (encoded → text)
 # -------------------------------
 DECODE_MAPS = {
     "titanic": {
@@ -51,11 +52,11 @@ if st.session_state.page == "main":
         task = st.selectbox("Task", ["Classification", "Regression"])
 
         if task == "Classification":
-            label = st.selectbox("Dataset", list(CLASS_DATASETS.keys()))
+            label = st.selectbox("Dataset", CLASS_DATASETS.keys())
             dataset = CLASS_DATASETS[label]
             alg = st.selectbox("Algorithm", ALGS_CLASS)
         else:
-            label = st.selectbox("Dataset", list(REG_DATASETS.keys()))
+            label = st.selectbox("Dataset", REG_DATASETS.keys())
             dataset = REG_DATASETS[label]
             alg = st.selectbox("Algorithm", ALGS_REG)
 
@@ -70,22 +71,12 @@ if st.session_state.page == "main":
             st.rerun()
 
     with mid:
-        st.header("Algorithms Information")
-        st.markdown("""
-        - **Logistic Regression** – Linear classifier  
-        - **Decision Tree** – Rule-based classifier  
-        - **Random Forest** – Ensemble model  
-        - **Linear / Ridge / Lasso** – Regression models
-        """)
+        st.header("Algorithms Info")
+        st.write("Logistic, Decision Tree, Random Forest, Linear, Ridge, Lasso")
 
     with right:
-        st.header("Datasets Information")
-        st.markdown("""
-        - **Titanic** – Survival prediction  
-        - **Zoo** – Animal classification  
-        - **Salary Data** – Salary regression  
-        - **Insurance** – Expense prediction
-        """)
+        st.header("Datasets Info")
+        st.write("Titanic, Zoo, Salary Data, Insurance")
 
 # ================= PREDICTION PAGE =================
 else:
@@ -96,13 +87,13 @@ else:
         st.session_state.page = "main"
         st.rerun()
 
-    # Load trained pipeline (preprocessor + model)
+    # Load trained PIPELINE (preprocessor + model)
     model = joblib.load(f"{MODELS_DIR}/{cfg['dataset']}_{cfg['alg']}.pkl")
 
     # Load raw dataset (for UI + EDA)
     df = load_dataset(cfg["dataset"])
 
-    # Load target name (for EDA only)
+    # Load schema ONLY to get target name
     schema = json.load(open(f"{MODELS_DIR}/{cfg['dataset']}_{cfg['alg']}_schema.json"))
     target = schema["target"]
 
@@ -117,13 +108,13 @@ else:
 
         for col in X_raw.columns:
 
-            # Case 1: Decoded categorical (Titanic)
+            # Decoded categorical (Titanic)
             if cfg["dataset"] in DECODE_MAPS and col in DECODE_MAPS[cfg["dataset"]]:
                 options = list(DECODE_MAPS[cfg["dataset"]][col].values())
                 selected = st.selectbox(col, options)
                 user_input[col] = ENCODE_MAPS[cfg["dataset"]][col][selected]
 
-            # Case 2: Numeric
+            # Numeric
             elif pd.api.types.is_numeric_dtype(X_raw[col]):
                 if (X_raw[col] % 1 == 0).all():
                     user_input[col] = st.number_input(
@@ -137,7 +128,7 @@ else:
                         value=float(X_raw[col].median())
                     )
 
-            # Case 3: Other categorical
+            # Other categorical
             else:
                 user_input[col] = st.selectbox(
                     col,
@@ -146,10 +137,30 @@ else:
 
         submitted = st.form_submit_button("Predict")
 
-    # ---------------- PREDICTION RESULT ----------------
+    # ---------------- PREDICTION (DEPLOYMENT-SAFE) ----------------
     if submitted:
+        # Build input DataFrame
         X_input = pd.DataFrame([user_input])
+
+        # ===== CRITICAL FIX FOR DEPLOYMENT =====
+        # Align with training-time feature set
+        expected_cols = model.named_steps["preprocessor"].feature_names_in_
+
+        # Add missing columns
+        for col in expected_cols:
+            if col not in X_input.columns:
+                X_input[col] = np.nan
+
+        # Remove extra columns + reorder
+        X_input = X_input[expected_cols]
+
+        # Enforce safe dtypes
+        for col in X_input.columns:
+            X_input[col] = pd.to_numeric(X_input[col], errors="coerce")
+
+        # Predict
         pred = model.predict(X_input)[0]
+
         st.subheader("Prediction Result")
         st.success(pred)
 
@@ -160,19 +171,16 @@ else:
         ["Dataset Overview", "Feature Distributions", "Target Analysis", "Feature Correlations"]
     )
 
-    # ---- Overview ----
     with tab1:
         st.dataframe(df.head())
         st.dataframe(df.describe(include="all"))
 
-    # ---- Feature Distributions ----
     with tab2:
         numeric_cols = df.select_dtypes("number").columns
         for i, col in enumerate(numeric_cols):
             fig = px.histogram(df, x=col, title=f"Distribution of {col}")
             st.plotly_chart(fig, key=f"dist_{col}_{i}")
 
-    # ---- Target Analysis ----
     with tab3:
         if df[target].dtype == "object":
             vc = df[target].value_counts().reset_index()
@@ -183,7 +191,6 @@ else:
             fig = px.histogram(df, x=target, title=f"Target Distribution: {target}")
             st.plotly_chart(fig, key="target_hist")
 
-    # ---- Correlations ----
     with tab4:
         num_df = df.select_dtypes("number")
         if len(num_df.columns) > 1:
