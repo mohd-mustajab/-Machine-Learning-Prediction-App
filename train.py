@@ -1,145 +1,195 @@
 # train.py
-"""
-Train a model on a preprocessed CSV and save model + schema + test predictions + metrics.
-
-Usage examples:
-python train.py --dataset titanic --preprocessed data/titanic_cleaned.csv --target Survived --alg logistic --task classification
-python train.py --dataset insurance --preprocessed data/insurance_cleaned.csv --target expenses --alg rf --task regression
-"""
 import argparse
-from pathlib import Path
 import json
+from pathlib import Path
 import pandas as pd
 import numpy as np
+
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, mean_squared_error, r2_score
-from models import get_classification_pipeline, get_regression_pipeline, save_model
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, r2_score, mean_squared_error
 
-OUT_MODELS = Path("models")
-OUT_MODELS.mkdir(parents=True, exist_ok=True)
-OUT_DIR = Path("outputs")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+from models import (
+    get_classification_model,
+    get_regression_model,
+    save_model
+)
 
-def infer_schema(df: pd.DataFrame, target_col: str) -> dict:
+# -------------------------------
+# Output directories
+# -------------------------------
+MODELS_DIR = Path("models")
+OUTPUTS_DIR = Path("outputs")
+MODELS_DIR.mkdir(exist_ok=True)
+OUTPUTS_DIR.mkdir(exist_ok=True)
+
+# -------------------------------
+# SAFE schema inference
+# -------------------------------
+def infer_schema(df: pd.DataFrame, target: str):
+    """
+    Infer feature schema for frontend input generation.
+    Safe for Python 3.13 and mixed dtypes.
+    """
     features = []
-    for c in df.columns:
-        if c == target_col:
+
+    for col in df.columns:
+        if col == target:
             continue
-        s = df[c]
-        if pd.api.types.is_integer_dtype(s):
-            t = "integer"
-        elif pd.api.types.is_float_dtype(s) or pd.api.types.is_numeric_dtype(s):
-            non_null = s.dropna()
-            if not non_null.empty and np.all(np.equal(np.mod(non_null.values, 1), 0)):
-                t = "integer"
+
+        s = df[col].dropna()
+
+        if pd.api.types.is_numeric_dtype(s):
+            # integer-like numeric check
+            if len(s) > 0 and (s % 1 == 0).all():
+                ftype = "integer"
             else:
-                t = "numeric"
+                ftype = "numeric"
         else:
-            t = "categorical"
-        features.append({"name": c, "type": t})
-    return {"features": features, "target": target_col}
+            ftype = "categorical"
 
-def train_and_save(preprocessed_csv: str, target_col: str, dataset_key: str, alg: str,
-                   task: str, test_size: float = 0.2, random_state: int = 42):
-    df = pd.read_csv(preprocessed_csv)
-    if target_col not in df.columns:
-        raise ValueError(f"Target '{target_col}' not found in CSV columns: {df.columns.tolist()}")
+        features.append({
+            "name": col,
+            "type": ftype
+        })
 
-    # drop rows with missing target
-    df = df.dropna(subset=[target_col]).reset_index(drop=True)
-    X = df.drop(columns=[target_col])
-    y = df[target_col]
+    return {
+        "features": features,
+        "target": target
+    }
 
-    # validate task vs target dtype
-    is_numeric_target = pd.api.types.is_numeric_dtype(y)
-    n_unique = y.dropna().nunique()
-    maybe_discrete_numeric = is_numeric_target and n_unique <= 20
+# -------------------------------
+# Preprocessor builder
+# -------------------------------
+def build_preprocessor(X: pd.DataFrame):
+    num_cols = X.select_dtypes(include=np.number).columns.tolist()
+    cat_cols = X.select_dtypes(exclude=np.number).columns.tolist()
 
-    if task not in ("classification", "regression"):
-        raise ValueError("task must be 'classification' or 'regression'")
+    num_pipe = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ])
 
+    cat_pipe = Pipeline([
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("encoder", OneHotEncoder(handle_unknown="ignore"))
+    ])
+
+    return ColumnTransformer([
+        ("num", num_pipe, num_cols),
+        ("cat", cat_pipe, cat_cols)
+    ])
+
+# -------------------------------
+# Training function
+# -------------------------------
+def train_and_save(csv_path, dataset, target, alg, task):
+    print(f"\n🔹 Training {dataset} | Algorithm: {alg} | Task: {task}")
+
+    # Load dataset
+    df = pd.read_csv(csv_path)
+
+    if target not in df.columns:
+        raise ValueError(f"Target column '{target}' not found in dataset")
+
+    # Drop rows with missing target
+    df = df.dropna(subset=[target]).reset_index(drop=True)
+
+    X = df.drop(columns=[target])
+    y = df[target]
+
+    # Build preprocessing
+    preprocessor = build_preprocessor(X)
+
+    # Select model
     if task == "classification":
-        if is_numeric_target and not maybe_discrete_numeric:
-            raise ValueError(
-                "Target appears continuous (many unique numeric values) but task is classification.\n"
-                "Either set --task regression or convert the target to discrete classes."
-            )
-    else: # regression
-        if not is_numeric_target:
-            raise ValueError(
-                "Target appears non-numeric (categorical) but task is regression.\n"
-                "Either set --task classification or convert the target to numeric."
-            )
-
-    # save schema
-    schema = infer_schema(df, target_col)
-    schema_path = OUT_MODELS / f"{dataset_key}_{alg}_schema.json"
-    with open(schema_path, "w", encoding="utf-8") as f:
-        json.dump(schema, f, indent=2)
-    print(f"Saved schema -> {schema_path}")
-
-    # select pipeline by explicit task
-    if task == "classification":
-        pipe = get_classification_pipeline(alg)
+        model = get_classification_model(alg)
     else:
-        pipe = get_regression_pipeline(alg)
+        model = get_regression_model(alg)
 
-    # train/test split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
-    print("Training model...")
-    pipe.fit(X_train, y_train)
-    print("Training complete.")
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("model", model)
+    ])
 
-    model_path = OUT_MODELS / f"{dataset_key}_{alg}.pkl"
-    save_model(pipe, model_path)
-    print(f"Saved model -> {model_path}")
+    # -------------------------------
+    # SAFE train-test split
+    # -------------------------------
+    stratify_arg = None
+    if task == "classification":
+        class_counts = y.value_counts()
+        if class_counts.min() >= 2:
+            stratify_arg = y
+        else:
+            print("⚠ Stratification disabled (some classes have only 1 sample)")
 
-    preds = pipe.predict(X_test)
-    out = X_test.copy()
-    out["_true"] = y_test.values
-    out["_pred"] = preds
-    preds_path = OUT_DIR / f"predictions_{dataset_key}_{alg}.csv"
-    out.to_csv(preds_path, index=False)
-    print(f"Saved test predictions -> {preds_path}")
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42,
+        stratify=stratify_arg
+    )
 
+    # Train
+    pipeline.fit(X_train, y_train)
+    preds = pipeline.predict(X_test)
+
+    # -------------------------------
+    # Save model
+    # -------------------------------
+    model_path = MODELS_DIR / f"{dataset}_{alg}.pkl"
+    save_model(pipeline, model_path)
+
+    # -------------------------------
+    # Save schema (RAW features)
+    # -------------------------------
+    schema = infer_schema(df, target)
+    with open(MODELS_DIR / f"{dataset}_{alg}_schema.json", "w") as f:
+        json.dump(schema, f, indent=2)
+
+    # -------------------------------
+    # Metrics
+    # -------------------------------
     metrics = {}
     if task == "classification":
-        try:
-            metrics["accuracy"] = float(accuracy_score(y_test, preds))
-        except Exception:
-            pass
+        metrics["accuracy"] = float(accuracy_score(y_test, preds))
     else:
         metrics["r2"] = float(r2_score(y_test, preds))
         metrics["mse"] = float(mean_squared_error(y_test, preds))
 
-    metrics_path = OUT_DIR / f"metrics_{dataset_key}_{alg}.json"
-    with open(metrics_path, "w", encoding="utf-8") as f:
+    with open(OUTPUTS_DIR / f"metrics_{dataset}_{alg}.json", "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"Saved metrics -> {metrics_path}")
 
-    return {
-        "model_path": str(model_path),
-        "schema_path": str(schema_path),
-        "preds_path": str(preds_path),
-        "metrics_path": str(metrics_path),
-    }
+    # -------------------------------
+    # Save predictions
+    # -------------------------------
+    out = X_test.copy()
+    out["_true"] = y_test.values
+    out["_pred"] = preds
+    out.to_csv(OUTPUTS_DIR / f"predictions_{dataset}_{alg}.csv", index=False)
 
+    print(f"✔ Training complete: {dataset}_{alg}")
+
+# -------------------------------
+# CLI entry point
+# -------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", required=True, help="logical dataset key (e.g., titanic)")
-    parser.add_argument("--preprocessed", required=True, help="path to preprocessed CSV")
-    parser.add_argument("--target", required=True, help="target column name")
-    parser.add_argument("--alg", required=True, help="algorithm, see README for allowed values")
-    parser.add_argument("--task", required=True, choices=["classification","regression"], help="task: classification or regression")
-    parser.add_argument("--test-size", type=float, default=0.2)
-    parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--dataset", required=True, help="dataset key (titanic, zoo, salary_data, insurance)")
+    parser.add_argument("--preprocessed", required=True, help="path to CSV file")
+    parser.add_argument("--target", required=True, help="target column")
+    parser.add_argument("--alg", required=True, help="algorithm name")
+    parser.add_argument("--task", required=True, choices=["classification", "regression"])
     args = parser.parse_args()
 
-    res = train_and_save(preprocessed_csv=args.preprocessed,
-                         target_col=args.target,
-                         dataset_key=args.dataset,
-                         alg=args.alg,
-                         task=args.task,
-                         test_size=args.test_size,
-                         random_state=args.random_state)
-    print("Artifacts:", res)
+    train_and_save(
+        csv_path=args.preprocessed,
+        dataset=args.dataset,
+        target=args.target,
+        alg=args.alg,
+        task=args.task
+    )
