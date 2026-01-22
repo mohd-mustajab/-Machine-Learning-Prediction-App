@@ -120,8 +120,7 @@ if st.session_state.page == "main":
                 st.write(f"Key: `{key}` — file: see data/ (expected)")
         st.markdown("---")
         st.write("Expected files (debug):")
-        for k, v in list_expected_files().items():
-            st.write(f"{k}: {v[0] if v else '—'}")
+    
 
 # MODEL COMPARISON VIEW (triggered from main or prediction) ------------------
 if st.session_state.get("compare_request"):
