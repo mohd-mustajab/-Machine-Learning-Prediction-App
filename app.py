@@ -11,12 +11,14 @@ st.set_page_config(layout="wide", page_title="ML Prediction App")
 
 MODELS_DIR = "models"
 
+# ================= DATASETS =================
 CLASS_DATASETS = {"Titanic": "titanic", "Zoo": "zoo"}
 REG_DATASETS = {"Salary Data": "salary_data", "Insurance": "insurance"}
 
 ALGS_CLASS = ["logistic", "decision_tree", "rf"]
 ALGS_REG = ["linear", "ridge", "lasso", "rf"]
 
+# ================= DECODE MAPS =================
 DECODE_MAPS = {
     "titanic": {
         "Sex": {0: "Female", 1: "Male"},
@@ -30,6 +32,7 @@ ENCODE_MAPS = {
     for ds, cols in DECODE_MAPS.items()
 }
 
+# ================= SESSION =================
 if "page" not in st.session_state:
     st.session_state.page = "main"
 
@@ -78,58 +81,84 @@ else:
         st.session_state.page = "main"
         st.rerun()
 
+    # Load trained pipeline
     model = joblib.load(f"{MODELS_DIR}/{cfg['dataset']}_{cfg['alg']}.pkl")
+
+    # Load raw dataset (UI only)
     df = load_dataset(cfg["dataset"])
 
+    # Load target from schema (EDA only)
     schema = json.load(open(f"{MODELS_DIR}/{cfg['dataset']}_{cfg['alg']}_schema.json"))
     target = schema["target"]
 
     X_raw = df.drop(columns=[target])
 
+    # ========== INPUT FORM ==========
     st.sidebar.header("Input Features")
 
     with st.sidebar.form("predict_form"):
         user_input = {}
 
         for col in X_raw.columns:
+
+            # Decode encoded categoricals (Titanic)
             if cfg["dataset"] in DECODE_MAPS and col in DECODE_MAPS[cfg["dataset"]]:
                 options = list(DECODE_MAPS[cfg["dataset"]][col].values())
                 selected = st.selectbox(col, options)
                 user_input[col] = ENCODE_MAPS[cfg["dataset"]][col][selected]
 
+            # Numeric
             elif pd.api.types.is_numeric_dtype(X_raw[col]):
                 if (X_raw[col] % 1 == 0).all():
-                    user_input[col] = st.number_input(col, int(X_raw[col].median()), step=1)
+                    user_input[col] = st.number_input(
+                        col, value=int(X_raw[col].median()), step=1
+                    )
                 else:
-                    user_input[col] = st.number_input(col, float(X_raw[col].median()))
+                    user_input[col] = st.number_input(
+                        col, value=float(X_raw[col].median())
+                    )
+
+            # Other categorical
             else:
-                user_input[col] = st.selectbox(col, sorted(X_raw[col].dropna().unique()))
+                user_input[col] = st.selectbox(
+                    col, sorted(X_raw[col].dropna().unique())
+                )
 
         submitted = st.form_submit_button("Predict")
 
+    # ========== PREDICTION (FINAL SAFE VERSION) ==========
     if submitted:
         X_input = pd.DataFrame([user_input])
 
-        # ALIGN COLUMNS
-        expected_cols = model.named_steps["preprocessor"].feature_names_in_
+        # Align columns with training
+        pre = model.named_steps["preprocessor"]
+        expected_cols = pre.feature_names_in_
+
         for c in expected_cols:
             if c not in X_input:
                 X_input[c] = np.nan
+
         X_input = X_input[expected_cols]
 
-        # FIX DTYPES (CRITICAL)
-        pre = model.named_steps["preprocessor"]
-        num_cols = pre.transformers_[0][2]
-        cat_cols = pre.transformers_[1][2]
+        # 🔑 CRITICAL FIX: get columns BY NAME, not index
+        num_cols = []
+        cat_cols = []
 
+        for name, transformer, cols in pre.transformers_:
+            if name == "num":
+                num_cols = cols
+            elif name == "cat":
+                cat_cols = cols
+
+        # Cast correctly
         for c in num_cols:
-            if c in X_input:
-                X_input[c] = pd.to_numeric(X_input[c], errors="coerce")
+            X_input[c] = pd.to_numeric(X_input[c], errors="coerce")
+
         for c in cat_cols:
-            if c in X_input:
-                X_input[c] = X_input[c].astype(object)
+            X_input[c] = X_input[c].astype(object)
 
         pred = model.predict(X_input)[0]
+
         st.subheader("Prediction Result")
         st.success(pred)
 
@@ -137,7 +166,7 @@ else:
     st.header("Exploratory Data Analysis")
 
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["Overview", "Feature Distributions", "Target Analysis", "Feature Correlations"]
+        ["Dataset Overview", "Feature Distributions", "Target Analysis", "Feature Correlations"]
     )
 
     with tab1:
