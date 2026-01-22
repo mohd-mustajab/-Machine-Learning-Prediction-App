@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error, r2_score
-from models import get_classification_pipeline, get_regression_pipeline, save_model
+from models import get_classification_model, get_regression_model, save_model
 
 OUT_MODELS = Path("models")
 OUT_MODELS.mkdir(parents=True, exist_ok=True)
@@ -80,9 +80,9 @@ def train_and_save(preprocessed_csv: str, target_col: str, dataset_key: str, alg
 
     # select pipeline by explicit task
     if task == "classification":
-        pipe = get_classification_pipeline(alg)
+        pipe = get_classification_model(alg)
     else:
-        pipe = get_regression_pipeline(alg)
+        pipe = get_regression_model(alg)
 
     # train/test split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
